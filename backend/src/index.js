@@ -30,6 +30,8 @@ const allowedOrigins = [
   "https://localhost:5173",
   "http://127.0.0.1:5173",
   "https://127.0.0.1:5173",
+  // Allow all Render.com subdomains for deployment
+  /\.onrender\.com$/,
 ].filter(Boolean);
 
 const publicDir = path.join(process.cwd(), "public");
@@ -41,11 +43,26 @@ app.use(express.json());
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) {
         callback(null, true);
         return;
       }
-
+      // Check string origins
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      // Check regex origins (for *.onrender.com)
+      const isAllowed = allowedOrigins.some((allowed) => {
+        if (allowed instanceof RegExp) {
+          return allowed.test(origin);
+        }
+        return false;
+      });
+      if (isAllowed) {
+        callback(null, true);
+        return;
+      }
       callback(new Error(`CORS origin not allowed: ${origin}`));
     },
     credentials: true,
@@ -62,14 +79,20 @@ app.get("/health", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
 
-// if the public directory exists, serve the static files
-// this is for the production build
+// Serve static files for production build (MUST be after API routes)
 if (fs.existsSync(publicDir)) {
   app.use(express.static(publicDir));
 
-  app.get("/{*any}", (req, res, next) => {
+  // Fallback to index.html for client-side routing
+  app.get("*", (req, res, next) => {
+    // Skip API routes and other non-page requests
+    if (req.path.startsWith("/api") || req.path.includes(".")) {
+      return next();
+    }
     res.sendFile(path.join(publicDir, "index.html"), (err) => next(err));
   });
+} else {
+  console.warn("Public directory not found. Serving only API routes.");
 }
 
 server.listen(PORT, () => {
